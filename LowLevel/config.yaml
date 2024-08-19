@@ -1,0 +1,18 @@
+training_params:
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  momentum: 0.9
+  optimizer: adam  # Options: 'adam', 'sgd'
+  batch_size: 256
+  epochs: 5
+  loss_function: mse  # Options: 'mse', 'mae'
+
+active_learning_params:
+  tau: 0.2
+  decay_factor: 0.9
+  subset_size: 256
+  max_iterations: 100
+  cumulative: True
+
+logging_params:
+  log_dir: './logs'
