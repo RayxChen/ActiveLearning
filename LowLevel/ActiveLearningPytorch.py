@@ -3,49 +3,58 @@ import numpy as np
 from utils import load_config
 from Model import LitModel
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader, Subset
+from DataHandler import DataHandler
 from pytorch_lightning.loggers import TensorBoardLogger
 
 
 class ActiveLearning:
-    def __init__(
-        self,
-        strategy,
-        model,
-        train_dataset,
-        test_dataset,
-        config_file='config.yaml'
-    ):
-        # Load configuration from YAML file
-        config = load_config(config_file)
+    def __init__(self, strategy, model, train_dataset, test_dataset, config_file='config.yaml'):
+        # Load configuration
+        config = self._load_config(config_file)
+        self._initialize_params(config)
+
+        # Initialize components
+        self.data = DataHandler(train_dataset, test_dataset, self.batch_size)
+        self.model = self._initialize_model(model, config['training_params'])
+        self.logger = self._initialize_logger(config['logging_params'])
+        self.trainer = self._initialize_trainer()
+
+        # Initialize active learning specific attributes
+        self.sampled_indices = set()
+        self.last_distance = None
+        self.t = 0
+        self.strategy = strategy
+        self.dim_reducer = None
+
+    def _load_config(self, config_file):
+        """Load configuration from YAML file."""
+        return load_config(config_file)
+
+    def _initialize_params(self, config):
+        """Initialize parameters from the loaded configuration."""
         training_params = config['training_params']
         active_learning_params = config['active_learning_params']
-        logging_params = config['logging_params']
 
         self.tau = active_learning_params.get('tau', 0.2)
         self.decay_factor = active_learning_params.get('decay_factor', 0.95)
         self.subset_size = active_learning_params.get('subset_size', 200)
         self.max_iterations = active_learning_params.get('max_iterations', 100)
         self.cumulative = active_learning_params.get('cumulative', True)
-        
+
         self.batch_size = training_params.get('batch_size', 32)
         self.epochs = training_params.get('epochs', 5)
 
-        self.strategy = strategy
-        self.dim_reducer = None
+    def _initialize_model(self, model, training_params):
+        """Initialize the PyTorch Lightning model."""
+        return LitModel(model, training_params)
 
-        self.sampled_indices = set()
-        self.last_distance = None 
-        self.t = 0
+    def _initialize_logger(self, logging_params):
+        """Initialize the TensorBoard logger."""
+        return TensorBoardLogger(logging_params.get('log_dir', './logs'), name="active_learning")
 
-        # Initialize PyTorch Lightning components
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model = LitModel(model, training_params).to(self.device) 
-        
-        self.train_dataset = train_dataset
-        self.test_dataloader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False)
-        self.logger = TensorBoardLogger(logging_params.get('log_dir', './logs'), name="active_learning")
-        self.trainer = pl.Trainer(max_epochs=self.epochs, logger=self.logger, devices='auto', accelerator="gpu")
+    def _initialize_trainer(self):
+        """Initialize the PyTorch Lightning trainer."""
+        return pl.Trainer(max_epochs=self.epochs, logger=self.logger, devices='auto', accelerator="gpu")
 
     def dimensionality_reduction(self, X):
         print('Dimensionality reduction... raw data shape:', X.shape)
@@ -53,8 +62,9 @@ class ActiveLearning:
         print('Dimensionality completed... reduced data shape:', reduced_X.shape)
         return reduced_X
     
-    def run_sampling_strategy(self, X):
-        # X is full train set 
+    def run_sampling_strategy(self):
+        # X: np.array is full train set 
+        X = self.data.get_X()
 
         # Perform dimensionality reduction if required
         reduced_X = self.dimensionality_reduction(X)
@@ -67,14 +77,14 @@ class ActiveLearning:
 
         while not self.stopping_criterion():
             indices = self.strategy.sample(reduced_X, self.sampled_indices, self.subset_size)
-            if len(indices) == 0: # traverse all the data points for once
+            if len(indices) == 0:  # Traverse all the data points once
                 break
             self.sampled_indices.update(indices)
             St_reduced_X = reduced_X[indices]
             # Update metric distance set as a numpy array
             distance_calc_set_X = np.vstack([distance_calc_set_X, St_reduced_X])
 
-            # Compute distribution P and Wasserstein distance
+            # Compute distribution P and distance with Q
             P = self.strategy.get_distribution(distance_calc_set_X)
             distance = self.strategy.compute_distance(P, Q)
             print('distance', distance)
@@ -82,17 +92,15 @@ class ActiveLearning:
             if self.update_criterion(distance):
                 if self.cumulative:
                     # Train with the cumulative dataset
-                    train_subset = Subset(self.train_dataset, list(self.sampled_indices))
+                    train_dataloader = self.data.get_train_dataloader(list(self.sampled_indices))
                 else:
-                    train_subset = Subset(self.train_dataset, indices)
+                    train_dataloader = self.data.get_train_dataloader(indices)
 
-                train_dataloader = DataLoader(train_subset, batch_size=self.batch_size, shuffle=False)
                 self.trainer.fit(self.model, train_dataloader)
             else:
                 # Retrain with the cumulative dataset if update criterion is not met
                 if len(self.sampled_indices) > 0:
-                    cumulative_dataset = Subset(self.train_dataset, list(self.sampled_indices))
-                    cumulative_dataloader = DataLoader(cumulative_dataset, batch_size=self.batch_size, shuffle=False)
+                    cumulative_dataloader = self.data.get_train_dataloader(list(self.sampled_indices))
                     self.trainer.fit(self.model, cumulative_dataloader)
 
             self.last_distance = distance
@@ -108,8 +116,18 @@ class ActiveLearning:
         return diff_ratio <= self.tau  # distributions within a pct threshold tau
 
     def stopping_criterion(self):
-        return self.t >= self.max_iterations or len(self.sampled_indices) >= len(self.train_dataset)
+        return self.t >= self.max_iterations or len(self.sampled_indices) >= len(self.data.train_dataset)
     
-
     def test_performance(self):
-        self.trainer.test(self.model, dataloaders=self.test_dataloader)
+        test_dataloader = self.data.get_test_dataloader()
+        self.trainer.test(self.model, dataloaders=test_dataloader)
+
+    def add_new_data(self, new_train_data=None, new_test_data=None):
+        # TODO: when to add the new data in the AL process
+        # need to know the data collection speed, training speed, etc.
+
+        """Add new data to the existing datasets."""
+        if new_train_data:
+            self.data.update_train_dataset(new_train_data)
+        if new_test_data:
+            self.data.update_test_dataset(new_test_data)
