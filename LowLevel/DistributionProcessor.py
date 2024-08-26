@@ -1,30 +1,5 @@
-import umap
 import numpy as np
-from sklearn.manifold import TSNE, Isomap
-from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
-
-
-class DimensionalityReducer: 
-    def __init__(self, target_dim=1, method='umap'):
-        self.target_dim = target_dim
-        self.method = method
-        self.reducer = None
-
-    def fit_transform(self, data):
-        """Reduce the dimensionality of data to the target dimension using the specified method"""
-        if self.method == 'umap':
-            self.reducer = umap.UMAP(n_components=self.target_dim)
-        elif self.method == 'pca':
-            self.reducer = PCA(n_components=self.target_dim)
-        elif self.method == 'tsne':
-            self.reducer = TSNE(n_components=self.target_dim)
-        elif self.method == 'isomap':
-            self.reducer = Isomap(n_components=self.target_dim)
-        else:
-            raise ValueError("Method must be 'umap', 'pca', 'tsne', 'isomap',")
-        
-        return self.reducer.fit_transform(data)
 
 
 class DistributionEstimator:
