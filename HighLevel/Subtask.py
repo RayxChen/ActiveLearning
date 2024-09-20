@@ -1,144 +1,155 @@
+import os
+import yaml
+import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset, Subset
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import Dataset
+from typing import List, Dict, Any, Set, Tuple
+from Trainer import Trainer
 
+class SubtaskData(Dataset):
+    def __init__(self, data: pd.DataFrame, active_indices: Set[int], is_dynamic: bool):
+        self.data = data
+        self.active_indices = active_indices
+        self.is_dynamic = is_dynamic
+
+    def __len__(self) -> int:
+        return len(self.active_indices)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        if idx >= len(self):
+            raise IndexError("Index out of range")
+        
+        active_idx = list(self.active_indices)[idx]
+        row = self.data.iloc[active_idx]
+        
+        # Assuming the data is properly structured with separate feature and target columns
+        features = torch.tensor(row[self.feature_columns].values, dtype=torch.float32)
+        target = torch.tensor(row[self.target_column], dtype=torch.float32)
+        
+        return features, target
+
+    def add_samples(self, new_samples: pd.DataFrame):
+        if self.is_dynamic:
+            start_index = len(self.data)
+            self.data = pd.concat([self.data, new_samples], ignore_index=True)
+            self.active_indices.update(range(start_index, len(self.data)))
+        else:
+            print("Warning: Attempting to add samples to a static dataset. No changes made.")
 
 class Subtask:
-    def __init__(self, model, dataset, trainer, train_params, initial_importance, sampling_time):
+    def __init__(self, model: nn.Module, dataset: SubtaskData, trainer: Trainer, 
+                 train_params: Dict[str, Any], initial_importance: float, sampling_time: int):
         self.model = model
         self.data = dataset 
         self.trainer = trainer
         self.train_params = train_params
         self.importance = initial_importance
         self.sampling_time = sampling_time
-        self.history = {} # batch_level
+        self.history: Dict[str, List[float]] = {'train_loss': [], 'test_loss': []}
 
-    def __lt__(self, other):
-        return self.importance > other.importance # min heap
-    
-    def update_dataset(self):
-        pass
+    def __lt__(self, other: 'Subtask') -> bool:
+        return self.importance > other.importance  # min heap
 
+    def update_dataset(self, new_samples: pd.DataFrame) -> None:
+        if self.data.is_dynamic:
+            self.data.add_samples(new_samples)
+            self.trainer.update_dataloaders()
+        else:
+            print("Warning: Attempting to update a static dataset. No changes made.")
 
-class SubtaskData(Dataset):
-    def __init__(self, selected_data):
-        self.selected_data = selected_data
-    
-    def __len__(self):
-        return len(self.selected_data)
-    
-    def __getitem__(self, idx):
-        return self.selected_data[idx]
-    
+    @staticmethod
+    def load_model(model_path: str) -> nn.Module:
+        return torch.load(model_path) # load from dict perhaps
 
-
-class Trainer:
-    def __init__(self, params, log_dir):
+    @classmethod
+    def build_subtasks_from_config(cls, config_path: str) -> List['Subtask']:
         """
-        Initialize the Trainer.
+        Factory method to create multiple Subtask instances from a configuration file.
 
-        Parameters:
-        - params (dict): Dictionary containing model, dataset, batch_size, learning_rate, and epochs.
-        - log_dir (str): Directory where the TensorBoard logs will be stored.
-        """
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Check if GPU is available
-        self.model = params['model']
-        self.train_dataset = params['train_dataset']
-        self.test_dataset = params['test_dataset']  # Add a test dataset to params
-        self.batch_size = params.get('batch_size', 32)
-        self.learning_rate = params.get('learning_rate', 0.001)
-        self.epochs = params.get('epochs', 10)
+        This method acts as a factory, constructing multiple Subtask objects by interpreting
+        the provided configuration file. It handles the creation and setup of models,
+        datasets, and trainers for each subtask defined in the configuration.
 
-        # Create a DataLoader from the dataset
-        
-        self.train_dataloader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
-        self.test_dataloader = DataLoader(self.test_dataset, batch_size=self.batch_size, shuffle=False)
-
-        # Define the loss function and optimizer
-        self.criterion = nn.MSELoss()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
-        self.writer = SummaryWriter(log_dir=log_dir)  
-
-    def train(self, subset_indices=None):
-        """
-        Train the model for a specified number of epochs.
-        """
-        
-        train_loss_history = []
-        self.model.to(self.device)
-
-        self.model.train() 
-        
-        for epoch in range(self.epochs):
-            running_loss = 0.0
-            
-            if subset_indices is None:
-                train_dataloader = self.train_dataloader
-            else:
-                subset = Subset(self.train_dataset, subset_indices)
-                train_dataloader = DataLoader(subset, batch_size=self.batch_size, shuffle=False)
-
-            for batch_idx, (inputs, labels) in enumerate(train_dataloader):
-                # Move inputs and labels to the device
-                inputs, labels = inputs.to(self.device), labels.to(self.device)
-                # Zero the parameter gradients
-                self.optimizer.zero_grad()
-
-                # Forward pass
-                outputs = self.model(inputs)
-                loss = self.criterion(outputs, labels)
-
-                # Backward pass and optimize
-                loss.backward()
-                self.optimizer.step()
-
-                # Log loss value to TensorBoard for each batch
-                global_step = epoch * len(train_dataloader) + batch_idx
-                self.writer.add_scalar('Training Loss (Batch)', loss.item(), global_step)
-                train_loss_history.append(loss.item())
-
-                running_loss += loss.item()
-
-                print(f"Epoch {epoch + 1}/{self.epochs}, Batch {batch_idx + 1}/{len(train_dataloader)}, Loss: {loss.item():.4f}")
-
-            # Calculate and log the average loss for this epoch
-            avg_loss = running_loss / len(train_dataloader)
-            self.writer.add_scalar('Average Training Loss (Epoch)', avg_loss, epoch)
-
-            print(f"Epoch {epoch + 1}/{self.epochs}, Average Loss: {avg_loss:.4f}")
-
-        self.writer.close()
-
-        self.model.to("cpu")
-        # Clear the GPU memory
-        torch.cuda.empty_cache()
-
-        return train_loss_history
-
-    def eval(self):
-        """
-        Evaluate the model on the test set and calculate the mean and variance of the loss.
+        Args:
+            config_path (str): Path to the configuration file.
 
         Returns:
-        - mean_loss (float): Mean of the test losses.
-        - var_loss (float): Variance of the test losses.
+            List[Subtask]: A list of fully configured Subtask instances.
         """
-
-        self.model.to(self.device)
-        test_loss_history = []
-
-        self.model.eval()  # Set the model to evaluation mode
-
-        with torch.no_grad():
-            for inputs, labels in self.test_dataloader:
-                # Move inputs and labels to the device
-                inputs, labels = inputs.to(self.device), labels.to(self.device)
-                outputs = self.model(inputs)
-                loss = self.criterion(outputs, labels)
-                test_loss_history.append(loss.item())
-
-        return test_loss_history
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
         
+        global_config = config['global']
+        subtasks = []
 
+        for subtask_config in config['subtasks']:
+            # Load the model
+            model = cls.load_model(subtask_config['model_path'])
+
+            # Prepare the dataset
+            initial_data = pd.read_csv(subtask_config['data_path'])
+            is_dynamic = subtask_config.get('is_dynamic', False)
+            dataset = SubtaskData(initial_data, set(range(len(initial_data))), is_dynamic)
+
+            # Prepare trainer parameters
+            trainer_params = {**global_config['trainer'], **subtask_config.get('trainer', {})}
+            trainer_params['model'] = model
+            trainer_params['dataset'] = dataset
+
+            # Create the trainer
+            trainer = Trainer(global_config, trainer_params, log_dir=subtask_config['log_dir'])
+
+            # Construct the Subtask instance
+            subtask = cls(
+                model=model,
+                dataset=dataset,
+                trainer=trainer,
+                train_params=trainer_params,
+                initial_importance=subtask_config['initial_importance'],
+                sampling_time=subtask_config['sampling_time']
+            )
+            subtasks.append(subtask)
+
+        return subtasks
+
+    def save_checkpoint(self, checkpoint_dir: str) -> None:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        checkpoint_path = os.path.join(checkpoint_dir, f"subtask_{id(self)}_checkpoint.pth")
+        torch.save({
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.trainer.optimizer.state_dict(),
+            'importance': self.importance,
+            'sampling_time': self.sampling_time,
+            'history': self.history,
+            'train_params': self.train_params,
+            'data': self.data.data,
+            'active_indices': self.data.active_indices,
+            'is_dynamic': self.data.is_dynamic
+        }, checkpoint_path)
+
+    @classmethod
+    def load_from_checkpoint(cls, checkpoint_path: str, model: nn.Module, global_config: Dict[str, Any]) -> 'Subtask':
+        checkpoint = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        
+        dataset = SubtaskData(checkpoint['data'], checkpoint['active_indices'], checkpoint['is_dynamic'])
+        
+        trainer_params = checkpoint['train_params']
+        trainer_params['model'] = model
+        trainer_params['dataset'] = dataset
+
+        trainer = Trainer(global_config, trainer_params, log_dir='logs')
+        trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+
+        subtask = cls(
+            model=model,
+            dataset=dataset,
+            trainer=trainer,
+            train_params=trainer_params,
+            initial_importance=checkpoint['importance'],
+            sampling_time=checkpoint['sampling_time']
+        )
+        subtask.history = checkpoint['history']
+        
+        return subtask

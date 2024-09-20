@@ -25,7 +25,10 @@ class Encoder(nn.Module):
     def forward(self, x):
         h = x
         for i in range(len(self.layers)):
+            residual = h  # Save input for skip connection
             h = torch.relu(self.bn_layers[i](self.layers[i](h)))
+            if i > 0:  # Add skip connection after the first layer
+                h += residual
 
         mu = self.fc_mu(h)
         logvar = self.fc_logvar(h)
@@ -52,9 +55,12 @@ class Decoder(nn.Module):
     def forward(self, z):
         h = z
         for i in range(len(self.layers)):
+            residual = h  # Save input for skip connection
             h = torch.relu(self.bn_layers[i](self.layers[i](h)))
+            if i > 0:  # Add skip connection after the first layer
+                h += residual
 
-        return torch.sigmoid(self.fc_output(h)).clamp(0, 1)
+        return torch.sigmoid(self.fc_output(h))
 
 class VAE(pl.LightningModule):
     def __init__(self, input_dim, hidden_dim, latent_dim, learning_rate=1e-5):
@@ -62,8 +68,6 @@ class VAE(pl.LightningModule):
         self.learning_rate = learning_rate
         self.encoder = Encoder(input_dim, hidden_dim, latent_dim)
         self.decoder = Decoder(latent_dim, hidden_dim, input_dim)
-        
-        self.save_hyperparameters()
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -108,7 +112,3 @@ class VAE(pl.LightningModule):
     def sample(self, num_samples):
         z = torch.randn(num_samples, self.encoder.fc2_mu.out_features).to(self.device)
         return self.decoder(z)
-
-    def generate(self, x):
-        recon_x, _, _ = self.forward(x)
-        return recon_x

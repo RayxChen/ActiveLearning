@@ -58,6 +58,44 @@ class KLDivergenceStrategy(SamplingStrategy):
         distance = self.Agg.aggregate(distances)
         return distance
 
+class JSDivergenceStrategy(SamplingStrategy):
+    def __init__(self, dist_estimator, agg_method='mean'):
+        super().__init__(dist_estimator)
+        self.Agg = DistanceAggregator(agg_method)
+
+    def compute_distance(self, Ps, Qs):
+        """
+        Computes the Jensen-Shannon (JS) divergence between two 1D distributions.
+
+        Parameters:
+        P, Q: Tuples containing (histogram, bin_edges)
+            - P[0] and Q[0]: Histograms of the two distributions.
+            - P[1] and Q[1]: Bin edges of the histograms (not used in JS divergence).
+
+        Returns:
+        JS divergence between the distributions represented by P and Q.
+        """
+        distances = []
+        for P, Q in zip(Ps, Qs):
+            # Extract histograms from P and Q and ensure no zero values (clip to a small epsilon)
+            P = np.clip(P[0], 1e-10, None)
+            Q = np.clip(Q[0], 1e-10, None)
+
+            # Calculate the midpoint distribution M = 0.5 * (P + Q)
+            M = 0.5 * (P + Q)
+
+            # Compute KL divergence of P and Q with respect to M
+            kl_P_M = entropy(P, M)
+            kl_Q_M = entropy(Q, M)
+
+            # Jensen-Shannon divergence is the average of these two KL divergences
+            js_divergence = 0.5 * (kl_P_M + kl_Q_M)
+            distances.append(js_divergence)
+
+        # Aggregate the distances using the defined aggregation method
+        distance = self.Agg.aggregate(distances)
+        return distance
+
 
 class WassersteinDistanceStrategy(SamplingStrategy):
     def __init__(self, dist_estimator, agg_method='mean'):

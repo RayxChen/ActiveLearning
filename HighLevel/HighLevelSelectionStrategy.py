@@ -30,7 +30,7 @@ class EpsilonGreedyStrategy(SelectionStrategy):
 class ProbabilisticSamplingStrategy(SelectionStrategy):
     def select(self, priority_queue):
         total_importance = sum(subtask.importance for subtask in priority_queue)
-        probabilities = [subtask.importance / total_importance for subtask in priority_queue]
+        probabilities = [subtask.importance / total_importance + 1e-10 for subtask in priority_queue]
         selected_subtask = np.random.choice(priority_queue, p=probabilities)
         priority_queue.remove(selected_subtask)
         heapq.heapify(priority_queue)

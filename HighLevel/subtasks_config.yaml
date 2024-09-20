@@ -1,0 +1,47 @@
+global:
+  random_seed: 42
+  init_explore_size: 100
+  loss_threshold: 0.01
+  max_train_steps: 1000
+  selection_strategies:
+    - 'EpsilonGreedy'
+    - 'Greedy'
+    - 'ProbabilisticSampling'
+  importance_strategies:
+    - 'EMA'
+    - 'MaxMean'
+    - 'MaxStd'
+    - 'MaxRatio'
+    - 'MaxProduct'
+  selection_strategy_params:
+    epsilon: 0.2
+  importance_strategy_params:
+    lambda_param: 1.0
+    mu: 1.0
+    alpha: 0.8
+    mean_type: 'geometric'
+    time_weight: 0.1  # Added time_weight parameter
+  trainer:
+    batch_size: 64
+    learning_rate: 0.001
+    epochs: 100
+    test_size: 0.2
+
+subtasks:
+  - name: "Subtask1"
+    model_path: "path/to/model1"
+    data_path: "path/to/data1"
+    is_dynamic: false
+    initial_importance: 1.0
+    sampling_time: 0  # Initialize sampling_time to 0
+    # trainer:
+      # Override global params if needed, asynchronous...
+      # epochs: 15
+
+  - name: "Subtask2"
+    model_path: "path/to/model2"
+    data_path: "path/to/data2"
+    is_dynamic: true
+    initial_importance: 0.8
+    sampling_time: 0  # Initialize sampling_time to 0
+    # Uses global trainer params

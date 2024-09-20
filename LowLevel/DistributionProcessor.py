@@ -6,45 +6,48 @@ class DistributionEstimator:
     def __init__(self, method='freedman-diaconis'):
         self.method = method
         self.bins = None
+        self.bin_edges = None
 
     def calculate_bins(self, data):
         """
-        Calculate the optimal number of bins for each dimension of the dataset using the specified method.
+        Calculate the optimal number of bins and bin edges for each dimension of the dataset using the specified method.
         
         Parameters:
         data (np.array): The dataset, can be 1D or multi-dimensional. 
         
         Returns:
-        int or list of ints: The optimal number of bins for each dimension of the dataset.
+        list of np.array: The bin edges for each dimension of the dataset.
         """
         def _calculate_bins_1d(data_1d, method):
             n = len(data_1d)
             
             if method == 'freedman-diaconis':
                 iqr = np.percentile(data_1d, 75) - np.percentile(data_1d, 25)
-                bins = int(np.ceil((data_1d.max() - data_1d.min()) / (2 * iqr * n ** (-1 / 3))))
+                bin_width = 2 * iqr * n ** (-1 / 3)
                 
             elif method == 'scott':
-                bins = int(np.ceil((data_1d.max() - data_1d.min()) / (3.5 * np.std(data_1d) * n ** (-1 / 3))))
-            
+                bin_width = 3.5 * np.std(data_1d) * n ** (-1 / 3)
+                
             else:
                 raise ValueError("Method must be either 'freedman-diaconis' or 'scott'")
             
-            return bins
+            # Calculate bin edges based on bin width
+            bin_edges = np.arange(data_1d.min(), data_1d.max() + bin_width, bin_width)
+            return bin_edges
 
         # Flatten the data if it has shape (B, 1)
         if data.ndim == 2 and data.shape[1] == 1:
             data = data.flatten()
 
         if data.ndim == 1:
-            self.bins = _calculate_bins_1d(data, self.method)
+            self.bin_edges = _calculate_bins_1d(data, self.method)
         else:
-            # Calculate bins for each dimension separately
-            self.bins = []
+            # Calculate bin edges for each dimension separately
+            self.bin_edges = []
             for i in range(data.shape[1]):
-                self.bins.append(_calculate_bins_1d(data[:, i], self.method))
+                self.bin_edges.append(_calculate_bins_1d(data[:, i], self.method))
         
-        return self.bins
+        return self.bin_edges
 
     def get_empirical_distribution(self, data):
         """
@@ -60,19 +63,20 @@ class DistributionEstimator:
         if data.ndim == 2 and data.shape[1] == 1:
             data = data.flatten()
 
-        bins = self.calculate_bins(data) if self.bins is None else self.bins
+        if self.bin_edges is None:
+            self.calculate_bins(data)
         
         if data.ndim == 1:
-            hist, bin_edges = np.histogram(data, bins=bins, density=True)
+            hist, _ = np.histogram(data, bins=self.bin_edges, density=True)
             hist += np.finfo(float).eps
-            return [(hist / np.sum(hist), bin_edges)]
+            return [(hist / np.sum(hist), self.bin_edges)]
         
         else:
             distributions = []
             for i in range(data.shape[1]):
-                hist, bin_edges = np.histogram(data[:, i], bins=bins[i], density=True)
+                hist, _ = np.histogram(data[:, i], bins=self.bin_edges[i], density=True)
                 hist += np.finfo(float).eps
-                distributions.append((hist / np.sum(hist), bin_edges))
+                distributions.append((hist / np.sum(hist), self.bin_edges[i]))
             return distributions
 
     def visualize_empirical_distribution(self, distributions):
@@ -89,3 +93,5 @@ class DistributionEstimator:
             plt.ylabel('Density')
             plt.title(f'Histogram for Dimension {i+1}')
             plt.show()
+
+
