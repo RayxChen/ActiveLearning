@@ -1,0 +1,20 @@
+calculate_statistics took 17.3773 seconds to execute
+
+With replacement
+Sinkhorn distance mean: 1.4903
+Sinkhorn distance std: 0.0167
+Average % change: 3.36%
+% change std: 0.51%
+Acceptance rate: 60.00%
+
+
+calculate_statistics took 15.7918 seconds to execute
+
+Without replacement
+Sinkhorn distance mean: 1.1474
+Sinkhorn distance std: 0.0082
+Average % change: 12.02%
+% change std: 0.43%
+Acceptance rate: 56.67%
+
+
