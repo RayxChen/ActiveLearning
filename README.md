@@ -10,10 +10,10 @@ This project maintains i.i.d. conditions between training and test data by contr
 ## Key Features
 
 - **Distribution Control**
-  - Uses Sinkhorn distance for distribution measurement
+  - Uses different distance metrics for distribution measurement
   - Orders training data to maintain i.i.d. conditions 
   - Adapts to distribution shifts
-  - Theoretically grounded approach
+  - Theoretically grounded approach for Sinkhorn distance
 
 - **Efficient Computation**
   - Monte Carlo rejection sampling for given distribution distance
