@@ -4,7 +4,7 @@
 This project maintains i.i.d. conditions between training and test data by controlling distribution distances during training. It combines Active Learning with Monte Carlo methods and Sinkhorn distances to:
 
 1. Optimize training data order for i.i.d. conditions
-2. Handle high dimensional large datasets efficiently via clustering
+2. Designed for high dimensional datasets
 3. Integrate prediction-based selection seamlessly
 
 ## Key Features
